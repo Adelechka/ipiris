@@ -1,0 +1,99 @@
+#!/bin/bash
+
+if [[ "${BASH_VERSINFO[0]}${BASH_VERSINFO[1]}" -lt 52 ]]; then
+    echo "Ошибка: Требуется Bash версии 5.2 или выше."
+    exit 1
+fi
+
+handle_sigint() {
+    echo -e "\nДля завершения работы сценария введите символ \"q\" или \"Q\""
+}
+trap handle_sigint SIGINT
+
+declare -a stackA stackB stackC
+stackA=(1 2 3 4 5 6 7 8)
+stackB=()
+stackC=()
+
+# Функция для вывода текущего состояния стеков.
+print_stacks() {
+    local max_height=8
+    local i
+
+    local -a a_display=("${stackA[@]}")
+    local -a b_display=("${stackB[@]}")
+    local -a c_display=("${stackC[@]}")
+
+    while [ ${#a_display[@]} -lt $max_height ]; do a_display=(" " "${a_display[@]}"); done
+    while [ ${#b_display[@]} -lt $max_height ]; do b_display=(" " "${b_display[@]}"); done
+    while [ ${#c_display[@]} -lt $max_height ]; do c_display=(" " "${c_display[@]}"); done
+
+    for ((i = 0; i < max_height; i++)); do
+        printf "|%s|  |%s|  |%s|\n" "${a_display[i]}" "${b_display[i]}" "${c_display[i]}"
+    done
+    echo "+-+  +-+  +-+"
+    echo " A    B    C"
+}
+
+
+# Функция для проверки условия победы.
+check_victory() {
+    if [[ "${stackB[*]}" == "8 7 6 5 4 3 2 1" || "${stackC[*]}" == "8 7 6 5 4 3 2 1" ]]; then
+        echo "Поздравляем! Вы выиграли!"
+        exit 0
+    fi
+}
+
+# Главный игровой цикл.
+move_number=1
+while true; do
+    print_stacks
+
+    printf "Ход № %d (откуда, куда): " "$move_number"
+    read -r user_input
+
+    cleaned=$(echo "$user_input" | tr -d ' ' | tr '[:lower:]' '[:upper:]')
+
+    if [ "$cleaned" = "Q" ]; then
+        exit 1
+    fi
+
+    if [[ ${#cleaned} -ne 2 || "$cleaned" != [ABC][ABC] ]]; then
+        echo "Неверный ввод. Попробуйте снова."
+        continue
+    fi
+
+    src_char=${cleaned:0:1}
+    dst_char=${cleaned:1:1}
+
+    if [ "$src_char" = "$dst_char" ]; then
+        echo "Нельзя переместить диск в тот же стек. Попробуйте снова."
+        continue
+    fi
+
+    declare -n src_stack="stack$src_char"
+    declare -n dst_stack="stack$dst_char"
+
+    if [ ${#src_stack[@]} -eq 0 ]; then
+        echo "В стеке $src_char нет дисков для перемещения. Попробуйте снова."
+        continue
+    fi
+
+    disk=${src_stack[0]}
+
+    if [ ${#dst_stack[@]} -gt 0 ]; then
+        top_dst=${dst_stack[0]}
+        if [ "$disk" -gt "$top_dst" ]; then
+            echo "Такое перемещение запрещено!"
+            continue
+        fi
+    fi
+
+    src_stack=("${src_stack[@]:1}")
+    dst_stack=("$disk" "${dst_stack[@]}")
+
+    ((move_number++))
+
+    check_victory
+done
+

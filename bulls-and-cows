@@ -1,0 +1,73 @@
+#!/bin/bash
+
+if [[ "${BASH_VERSINFO[0]}${BASH_VERSINFO[1]}" -lt 52 ]]; then
+    echo "Ошибка: Требуется Bash версии 5.2 или выше."
+    exit 1
+fi
+
+handle_sigint() {
+    echo -e "\nДля завершения игры введите символ q или Q"
+}
+trap handle_sigint SIGINT
+
+# Функция для генерации случайного 4-х значного числа с неповторяющимися цифрами.
+generate_secret() {
+    first=$(shuf -i 1-9 -n 1)
+    digits=()
+    for d in {0..9}; do
+        if [ "$d" -ne "$first" ]; then
+            digits+=("$d")
+        fi
+    done
+    others=$(printf "%s\n" "${digits[@]}" | shuf -n 3 | tr -d '\n')
+    echo "${first}${others}"
+}
+
+secret=$(generate_secret)
+
+move=0
+history=""
+
+# Процесс игры
+while true; do
+    if ! read -r -p "Введите 4-х значное число с неповторяющимися цифрами (или q для выхода): " guess; then
+        continue
+    fi
+
+    if [[ "$guess" == "q" || "$guess" == "Q" ]]; then
+        exit 1
+    fi
+
+    if ! [[ "$guess" =~ ^[0-9]{4}$ ]]; then
+        echo "Ошибка: введите ровно 4 цифры (либо q для выхода)."
+        continue
+    fi
+
+    if [ "$(echo "$guess" | grep -o . | sort | uniq | wc -l)" -ne 4 ]; then
+        echo "Ошибка: цифры не должны повторяться."
+        continue
+    fi
+
+    move=$((move + 1))
+    bulls=0
+    cows=0
+
+    for i in {0..3}; do
+        guess_digit=${guess:$i:1}
+        secret_digit=${secret:$i:1}
+        if [ "$guess_digit" == "$secret_digit" ]; then
+            bulls=$((bulls + 1))
+        elif [[ "$secret" == *"$guess_digit"* ]]; then
+            cows=$((cows + 1))
+        fi
+    done
+
+    history="${history}\n$move: $guess — Быки: $bulls, Коровы: $cows"
+    echo -e "$history"
+
+    if [ "$bulls" -eq 4 ]; then
+        echo "Поздравляем! Вы угадали число $secret."
+        exit 0
+    fi
+done
+
