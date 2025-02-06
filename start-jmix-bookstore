@@ -1,0 +1,89 @@
+#!/bin/bash
+
+if (( BASH_VERSINFO[0] < 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] < 2) )); then
+  echo "Ошибка: Нужен Bash 5.2 или новее."
+  exit 1
+fi
+
+NETWORK_NAME="bookstore-network20"
+SUBNET_NAME="bookstore-subnet20"
+SUBNET_RANGE="192.168.1.0/24"
+ZONE="ru-central1-a"
+
+VM_NAME="bookstore-vm20"
+IMAGE_ID="fd86idv7gmqapoeiq5ld"
+PLATFORM="standard-v3"
+CORES=2
+MEMORY="4GB"
+DISK_SIZE=20
+DISK_TYPE="network-ssd"
+
+SSH_KEY_PATH="$HOME/.ssh/id_rsa_bookstore"
+TARGET_USER="ipiris"
+
+echo "Создание облачной сети..."
+yc vpc network create --name "$NETWORK_NAME"
+NETWORK_ID=$(yc vpc network get "$NETWORK_NAME" --format json | jq -r '.id')
+
+echo "Создание подсети..."
+yc vpc subnet create --name "$SUBNET_NAME" --network-id "$NETWORK_ID" --range "$SUBNET_RANGE" --zone "$ZONE"
+
+echo "Создание SSH-ключей..."
+ssh-keygen -t rsa -b 2048 -f "$SSH_KEY_PATH" -N ""
+
+echo "Создание виртуальной машины..."
+yc compute instance create \
+  --name "$VM_NAME" \
+  --zone "$ZONE" \
+  --platform "$PLATFORM" \
+  --cores "$CORES" \
+  --memory "$MEMORY" \
+  --create-boot-disk size="$DISK_SIZE",type="$DISK_TYPE",image-id="$IMAGE_ID" \
+  --network-interface subnet-name="$SUBNET_NAME",nat-ip-version=ipv4 \
+  --ssh-key "${SSH_KEY_PATH}.pub"
+
+echo "Получение IP-адреса машины..."
+sleep 10
+PUBLIC_IP=$(yc compute instance get "$VM_NAME" --format json | jq -r '.network_interfaces[0].primary_v4_address.one_to_one_nat.address')
+
+if [ -z "$PUBLIC_IP" ]; then
+  echo "Ошибка: Не удалось получить IP адрес!"
+  exit 1
+fi
+echo "Виртуальная машина запущена, IP: $PUBLIC_IP"
+
+echo "Ожидание доступности сервера..."
+until nc -z -v -w5 "$PUBLIC_IP" 22; do
+  echo "Пробую подключиться к SSH..."
+  sleep 10
+done
+
+# Убираем старую запись в known_hosts, если она есть
+ssh-keygen -R "$PUBLIC_IP" >/dev/null 2>&1
+
+echo "Создание и настройка пользователя $TARGET_USER..."
+ssh -T -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" yc-user@"$PUBLIC_IP" <<EOF
+sudo rm -f /var/run/nologin
+if ! id -u ipiris &>/dev/null; then
+  sudo useradd -m -s /bin/bash ipiris
+fi
+sudo mkdir -p /home/ipiris/.ssh
+sudo cp /home/yc-user/.ssh/authorized_keys /home/ipiris/.ssh/
+sudo chown -R ipiris:ipiris /home/ipiris/.ssh
+sudo chmod 700 /home/ipiris/.ssh
+sudo chmod 600 /home/ipiris/.ssh/authorized_keys
+echo "ipiris ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/ipiris >/dev/null
+sudo chmod 440 /etc/sudoers.d/ipiris
+EOF
+
+echo "Установка Docker и запуск контейнера..."
+ssh -T -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" "$TARGET_USER"@"$PUBLIC_IP" <<EOF
+sudo apt-get update -y
+sudo apt-get install -y docker.io
+sudo docker run -d -p 80:8080 --name bookstore jmix/jmix-bookstore
+EOF
+
+echo "Подключение по SSH:"
+echo "ssh -i $SSH_KEY_PATH $TARGET_USER@$PUBLIC_IP"
+echo "Веб-приложение доступно по адресу:"
+echo "http://$PUBLIC_IP"
